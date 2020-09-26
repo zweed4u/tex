@@ -22,23 +22,23 @@ class Monitor:
     def __init__(self):
         # TODO paramterize headless
         options = Options()
-        options.headless = True
+        # options.headless = True
+        options.add_argument("--start-maximized")
         self.driver = webdriver.Chrome(options=options)
-        # self.driver = webdriver.Chrome()
 
         # TODO parameterize this some way
         self.apartments = {
             "Sorrel": {
-                "base_url": "https://www.sorrelpcr.com/apartments/tx/frisco/floor-plans#/?beds=2",
+                "base_url": "https://www.sorrelpcr.com/apartments/tx/frisco/floor-plans#/",
                 "rooms": [
                     {
-                        "units": "https://www.sorrelpcr.com/apartments/tx/frisco/floor-plans#/floorplans/401080619/?beds=2&moveInDate=",
-                        "size": 1279,
+                        "units": "https://www.sorrelpcr.com/apartments/tx/frisco/floor-plans#/floorplans/401100123/?beds=2&moveInDate=",
+                        "size": "1,279",
                         "beds": 2,
                     },
                     {
-                        "units": "https://www.sorrelpcr.com/apartments/tx/frisco/floor-plans#/floorplans/401080618/?beds=2&moveInDate=",
-                        "size": 1103,
+                        "units": "https://www.sorrelpcr.com/apartments/tx/frisco/floor-plans#/floorplans/401100095/?beds=2&moveInDate=",
+                        "size": "1,103",
                         "beds": 2,
                     },
                 ],
@@ -104,26 +104,41 @@ class Monitor:
         for location_name, location_info in self.apartments.items():
             base_url = location_info["base_url"]
             rooms = location_info["rooms"]
-            # TESTING
-            sorrel_str = ""
-            # SORREL
-            for room in rooms:
-                sorrel_str += f"==================\nSorrel - {room['size']}sqft\n{room['units']}\n==================\n"
-                self.driver.get(room["units"])
-                self.driver.refresh()
+            if location_name == "Sorrel":
+                s_map = {location_name: dict()}
+                sorrel_str = ""
+                self.driver.get(base_url)
+                # TODO remove arbitrary wait - spinner on table load
+                time.sleep(1)
+                table = self.driver.find_element_by_class_name("table-margin-bottom")
+                for row in table.find_elements_by_class_name("table-row"):
+                    for room in rooms:
+                        newline_delimeted_row = row.text.splitlines()
+                        size = newline_delimeted_row[3]
+                        if room["size"] in size:
+                            # beds = newline_delimeted_row[1]
+                            # baths = newline_delimeted_row[2]
+                            price = newline_delimeted_row[4]
+                            s_map[location_name].update({size: price.split()[-1]})
 
-                # TODO conditional element locators
-                # sorrel locator
-                # TODO change this from arbitrary wait to retry
-                time.sleep(2)  # need to wait here
-                wrapper = self.driver.find_element_by_class_name(
-                    "floorplan-unit-wrapper"
-                )
-                for unit in wrapper.find_elements_by_class_name("unit-info"):
-                    sorrel_str += f"{unit.text}\n\n"
-            # print(sorrel_str)
+            #     sorrel_str += f"==================\nSorrel - {room['size']}sqft\n{room['units']}\n==================\n"
+            #     self.driver.get(room["units"])
+            #     time.sleep(1)
+            #     self.driver.refresh
+
+            #     # TODO conditional element locators
+            #     # sorrel locator
+            #     # TODO change this from arbitrary wait to retry
+            #     time.sleep(2)  # need to wait here
+            #     wrapper = self.driver.find_element_by_class_name(
+            #         "floorplan-unit-wrapper"
+            #     )
+            #     for unit in wrapper.find_elements_by_class_name("unit-info"):
+            #         sorrel_str += f"{unit.text}\n\n"
+            # # print(sorrel_str)
             self.driver.close()
-            return sorrel_str
+            return s_map
+            # return sorrel_str
 
 
 if __name__ == "__main__":
@@ -140,8 +155,7 @@ if __name__ == "__main__":
 
     m = Monitor()
     sorrel = m.update_prices()
-    print(sorrel)
     if slack_requester.url is not None:
         slack_requester.send_message(
-            f"<!channel> Testing sorrel scraper ```{sorrel}```"
+            f"<!channel> simplified sorrel scraper: ```{json.dumps(sorrel, indent=4)}```"
         )
