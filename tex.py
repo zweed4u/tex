@@ -22,9 +22,13 @@ class Monitor:
     def __init__(self):
         # TODO paramterize headless
         options = Options()
-        # options.headless = True
-        options.add_argument("--start-maximized")
+        options.headless = True
+        # start-maximized flag doesnt work in headless - makes sense; instead explicitly set
+        # options.add_argument("--start-maximized")
+        options.add_argument("--window-size=1440x900")
+
         self.driver = webdriver.Chrome(options=options)
+        self.driver.delete_all_cookies()
 
         # TODO parameterize this some way
         self.apartments = {
@@ -52,7 +56,7 @@ class Monitor:
                         "beds": 1,
                     },
                     {
-                        "units": "https://www.camdenliving.com/frisco-tx-apartments/camden-panther-creek/1331/16-sep-26-2020",
+                        "units": "https://www.camdenliving.com/frisco-tx-apartments/camden-panther-creek/932/16-sep-27-2020",
                         "size": 1170,
                         "beds": 2,
                     },
@@ -99,14 +103,19 @@ class Monitor:
                 ],
             },
         }
+        self.latest_run_duration = None
+        self.previous_initial_map = self.update_prices()
 
     def update_prices(self):
+        start_time = time.time()
+        apt_map = dict()
         for location_name, location_info in self.apartments.items():
             base_url = location_info["base_url"]
             rooms = location_info["rooms"]
+            apt_map[location_name] = dict()
+
             if location_name == "Sorrel":
-                s_map = {location_name: dict()}
-                sorrel_str = ""
+                print("Sorrel parsing...")
                 self.driver.get(base_url)
                 # TODO remove arbitrary wait - spinner on table load
                 time.sleep(1)
@@ -119,26 +128,79 @@ class Monitor:
                             # beds = newline_delimeted_row[1]
                             # baths = newline_delimeted_row[2]
                             price = newline_delimeted_row[4]
-                            s_map[location_name].update({size: price.split()[-1]})
+                            apt_map[location_name].update({size: price.split()[-1]})
 
-            #     sorrel_str += f"==================\nSorrel - {room['size']}sqft\n{room['units']}\n==================\n"
-            #     self.driver.get(room["units"])
-            #     time.sleep(1)
-            #     self.driver.refresh
+            elif location_name == "Camden Panther Creek":
+                print("Camden Panther Creek parsing...")
+                for room in rooms:
+                    # TODO handle benign modal
+                    self.driver.get(room["units"])
+                    rent_total = self.driver.find_element_by_class_name(
+                        "rent-total-amount"
+                    )
+                    fees = self.driver.find_elements_by_class_name("fee-amount")
+                    rent = fees[0].text
+                    description = self.driver.find_element_by_class_name(
+                        "card.unit-info"
+                    ).text
 
-            #     # TODO conditional element locators
-            #     # sorrel locator
-            #     # TODO change this from arbitrary wait to retry
-            #     time.sleep(2)  # need to wait here
-            #     wrapper = self.driver.find_element_by_class_name(
-            #         "floorplan-unit-wrapper"
-            #     )
-            #     for unit in wrapper.find_elements_by_class_name("unit-info"):
-            #         sorrel_str += f"{unit.text}\n\n"
-            # # print(sorrel_str)
-            self.driver.close()
-            return s_map
-            # return sorrel_str
+                    size = description.splitlines()[1]
+                    # lmao this check isnt even needed becuase we're using
+                    # room specific urls but okay I guess...
+                    if f"{room['size']}" in size:
+                        # beds = description.splitlines()[2]
+                        # baths = description.splitlines()[3]
+                        apt_map[location_name].update({size: rent})
+
+            elif location_name == "Bexley":
+                print("Bexley parsing...")
+                for room in rooms:
+                    self.driver.get(room["units"])
+                    time.sleep(1)
+                    table = self.driver.find_element_by_class_name(
+                        "availableUnits.table.table-bordered.table-striped.table-responsive"
+                    )
+                    for unit in table.find_elements_by_class_name("AvailUnitRow"):
+                        size = unit.find_element_by_css_selector(
+                            "td[data-label='Sq. Ft.']"
+                        ).text
+                        price_range = unit.find_element_by_css_selector(
+                            "td[data-label='Rent']"
+                        ).text
+                        min_price = price_range.split("-")[0]
+                        price_as_num = int(min_price.replace("$", "").replace(",", ""))
+                        current_cheapest = int(
+                            apt_map[location_name]
+                            .get(size, "$9,999")
+                            .replace("$", "")
+                            .replace(",", "")
+                        )
+                        if price_as_num < current_cheapest:
+                            apt_map[location_name].update({size: min_price})
+
+            elif location_name == "Cortland Phillips Creek":
+                print("Cortland Phillips Creek parsing...")
+                for room in rooms:
+                    self.driver.get(room["units"])
+                    size = self.driver.find_element_by_class_name(
+                        "floorplan-single__meta"
+                    ).text
+                    rent = self.driver.find_element_by_class_name(
+                        "floorplan-single__price-text"
+                    ).text
+                    size_sq_ft = size.split("| ")[-1]
+                    price = rent.split()[-1]
+                    apt_map[location_name].update({size_sq_ft: price})
+
+        self.latest_run_duration = time.time() - start_time
+        return apt_map
+
+    def compare(self, apartment_map):
+        # TODO - compare prices of a single apartment and return change/possibly report
+        pass
+
+    def close_browser(self):
+        self.driver.close()
 
 
 if __name__ == "__main__":
@@ -154,8 +216,13 @@ if __name__ == "__main__":
     slack_requester = SlackRequester(slack_webhook_url)
 
     m = Monitor()
-    sorrel = m.update_prices()
+    # initial
+    first_map = m.previous_initial_map
+    # close browser right away for now
+    m.close_browser()
+    print(first_map)
+    # updated_map = m.update_prices()
     if slack_requester.url is not None:
         slack_requester.send_message(
-            f"<!channel> simplified sorrel scraper: ```{json.dumps(sorrel, indent=4)}```"
+            f"<!channel> Headless scrape took {m.latest_run_duration}s: ```{json.dumps(first_map, indent=4)}```"
         )
