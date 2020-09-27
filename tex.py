@@ -217,21 +217,24 @@ class Monitor:
                     .replace(",", "")
                     .split(".")[0]
                 )
+                compare_report_string += f"[*{location} - {size}*] size room price "
                 if updated_rooms_num_price != previous_rooms_num_price:
-                    compare_report_string += f"[*{location} - {size}*] size room price "
+                    is_changed = True
                     price_difference = abs(
                         updated_rooms_num_price - previous_rooms_num_price
                     )
                     if updated_rooms_num_price > previous_rooms_num_price:
-                        is_changed = True
                         compare_report_string += "increased :arrow_up: "
                     else:
-                        is_changed = True
                         compare_report_string += "decreased :arrow_down: "
-                    compare_report_string += f"by *${price_difference}* "
+                    compare_report_string += (
+                        f"by *${price_difference}*! Was: *${previous_rooms_num_price}* "
+                    )
                 else:
-                    compare_report_string += f"[*{location} - {size}*] size room price has remained the same. "
-                compare_report_string += f"- Currently *${updated_rooms_num_price}*\n\n"
+                    compare_report_string += f"has remained the same. "
+                compare_report_string += (
+                    f"- Currently: *${updated_rooms_num_price}*\n\n"
+                )
         self.previous_initial_map = updated_map
         return (compare_report_string, is_changed)
 
