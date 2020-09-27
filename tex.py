@@ -4,6 +4,7 @@ import sys
 import time
 import json
 import argparse
+import datetime
 import requests
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -105,6 +106,7 @@ class Monitor:
         }
         self.latest_run_duration = None
         self.previous_initial_map = self.update_prices()
+        self.updated_map = None
 
     def update_prices(self):
         start_time = time.time()
@@ -115,7 +117,7 @@ class Monitor:
             apt_map[location_name] = dict()
 
             if location_name == "Sorrel":
-                print("Sorrel parsing...")
+                print(f"{datetime.datetime.now()} :: Sorrel parsing...")
                 self.driver.get(base_url)
                 # TODO remove arbitrary wait - spinner on table load
                 time.sleep(1)
@@ -131,7 +133,7 @@ class Monitor:
                             apt_map[location_name].update({size: price.split()[-1]})
 
             elif location_name == "Camden Panther Creek":
-                print("Camden Panther Creek parsing...")
+                print(f"{datetime.datetime.now()} :: Camden Panther Creek parsing...")
                 for room in rooms:
                     # TODO handle benign modal
                     self.driver.get(room["units"])
@@ -153,7 +155,7 @@ class Monitor:
                         apt_map[location_name].update({size: rent})
 
             elif location_name == "Bexley":
-                print("Bexley parsing...")
+                print(f"{datetime.datetime.now()} :: Bexley parsing...")
                 for room in rooms:
                     self.driver.get(room["units"])
                     time.sleep(1)
@@ -179,7 +181,9 @@ class Monitor:
                             apt_map[location_name].update({size: min_price})
 
             elif location_name == "Cortland Phillips Creek":
-                print("Cortland Phillips Creek parsing...")
+                print(
+                    f"{datetime.datetime.now()} :: Cortland Phillips Creek parsing..."
+                )
                 for room in rooms:
                     self.driver.get(room["units"])
                     size = self.driver.find_element_by_class_name(
@@ -195,34 +199,77 @@ class Monitor:
         self.latest_run_duration = time.time() - start_time
         return apt_map
 
-    def compare(self, apartment_map):
-        # TODO - compare prices of a single apartment and return change/possibly report
-        pass
+    def update_and_compare(self):
+        is_changed = False
+        if self.previous_initial_map is None:
+            return "Unable to compare - previous map was none"
+        # TODO - use get() for check and fault tolerance
+        updated_map = self.update_prices()
+        compare_report_string = ""
+        for location, location_room_info in updated_map.items():
+            for size, price in location_room_info.items():
+                updated_rooms_num_price = int(
+                    price.replace("$", "").replace(",", "").split(".")[0]
+                )
+                previous_rooms_num_price = int(
+                    self.previous_initial_map[location][size]
+                    .replace("$", "")
+                    .replace(",", "")
+                    .split(".")[0]
+                )
+                if updated_rooms_num_price != previous_rooms_num_price:
+                    compare_report_string += f"[*{location} - {size}*] size room price "
+                    price_difference = abs(
+                        updated_rooms_num_price - previous_rooms_num_price
+                    )
+                    if updated_rooms_num_price > previous_rooms_num_price:
+                        is_changed = True
+                        compare_report_string += "increased :arrow_up: "
+                    else:
+                        is_changed = True
+                        compare_report_string += "decreased :arrow_down: "
+                    compare_report_string += f"by *${price_difference}* "
+                else:
+                    compare_report_string += f"[*{location} - {size}*] size room price has remained the same. "
+                compare_report_string += f"- Currently *${updated_rooms_num_price}*\n\n"
+        self.previous_initial_map = updated_map
+        return (compare_report_string, is_changed)
 
     def close_browser(self):
         self.driver.close()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    # TODO add headless flag
-    parser.add_argument("--poll", type=int, default=10)
-    args = parser.parse_args()
+    try:
+        parser = argparse.ArgumentParser()
+        # TODO add headless flag
+        parser.add_argument("--poll", type=int, default=60)
+        args = parser.parse_args()
 
-    current_directory = os.path.dirname(os.path.realpath(__file__))
-    with open(f"{current_directory}/config.json") as json_file:
-        config_data = json.load(json_file)
-    slack_webhook_url = config_data.get("webhook_url")
-    slack_requester = SlackRequester(slack_webhook_url)
+        current_directory = os.path.dirname(os.path.realpath(__file__))
+        with open(f"{current_directory}/config.json") as json_file:
+            config_data = json.load(json_file)
+        slack_webhook_url = config_data.get("webhook_url")
+        slack_requester = SlackRequester(slack_webhook_url)
 
-    m = Monitor()
-    # initial
-    first_map = m.previous_initial_map
-    # close browser right away for now
-    m.close_browser()
-    print(first_map)
-    # updated_map = m.update_prices()
-    if slack_requester.url is not None:
-        slack_requester.send_message(
-            f"<!channel> Headless scrape took {m.latest_run_duration}s: ```{json.dumps(first_map, indent=4)}```"
-        )
+        m = Monitor()
+        running = True
+        while running:
+            print()
+            time.sleep(args.poll)
+            try:
+                report, price_update = m.update_and_compare()
+                if slack_requester.url is not None:
+                    mention = ""
+                    if price_update:
+                        mention += "<!channel> "
+                    slack_requester.send_message(
+                        f"{mention}Latest headless scrape took {m.latest_run_duration}s\n:moneybag: Price Update Report :moneybag:\n{report}\n"
+                    )
+            except Exception as exc:
+                print(f"Subsequent lookup failed in update and comparison: {exc}")
+                running = False
+
+        m.close_browser()
+    except:
+        m.close_browser()
