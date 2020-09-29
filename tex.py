@@ -256,23 +256,35 @@ if __name__ == "__main__":
         slack_requester = SlackRequester(slack_webhook_url)
 
         m = Monitor()
+        slack_requester.send_message(
+            f"*{datetime.datetime.now()} UTC* - Latest headless scrape took {m.latest_run_duration}s\n:moneybag: *BENCHMARK Price Update Report* :moneybag:\n{json.dumps(m.previous_initial_map, indent=4)}\n"
+        )
         running = True
         while running:
-            print()
-            time.sleep(args.poll)
             try:
+                print()
+                time.sleep(args.poll)
                 report, price_update = m.update_and_compare()
                 if slack_requester.url is not None:
                     mention = ""
                     if price_update:
                         mention += "<!channel> "
-                    slack_requester.send_message(
-                        f"{mention}Latest headless scrape took {m.latest_run_duration}s\n:moneybag: Price Update Report :moneybag:\n{report}\n"
-                    )
-            except Exception as exc:
+                        slack_requester.send_message(
+                            f"{mention}*{datetime.datetime.now()} UTC* - Latest headless scrape took {m.latest_run_duration}s\n:moneybag: *Price Update Report* :moneybag:\n{report}\n"
+                        )
+            except (Exception, KeyboardInterrupt) as exc:
                 print(f"Subsequent lookup failed in update and comparison: {exc}")
                 running = False
 
         m.close_browser()
-    except:
-        m.close_browser()
+        slack_requester.send_message(
+            f"<!channel> *{datetime.datetime.now()} UTC* - Exception was raised during main event loop - bot exiting"
+        )
+    except (Exception, KeyboardInterrupt) as exc:
+        try:
+            m.close_browser()
+        except Exception as exc:
+            print(f"Unable to close browser in outer exception - {exc}")
+        slack_requester.send_message(
+            f"<!channel> *{datetime.datetime.now()} UTC* - Exception was raised during runtime - bot exiting"
+        )
